@@ -26,9 +26,6 @@ services:
       - "5432:5432"
     volumes:
       - database_data:/var/lib/postgresql/data
-      # Scripts são executados em ordem alfabética na primeira execução
-      - ./init-db/00-create-roles.sql:/docker-entrypoint-initdb.d/00-create-roles.sql:ro
-      - ../../backup_20260108.sql:/docker-entrypoint-initdb.d/01-backup.sql:ro
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres -d phoenix" ]
       interval: 5s
