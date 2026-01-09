@@ -16,6 +16,10 @@ from phoenix.server.api.input_types.ExperimentRunSort import (
     add_order_by_and_page_start_to_query,
     get_experiment_run_cursor,
 )
+from phoenix.server.api.types.ClassificationMetrics import (
+    ClassificationReport,
+    build_classification_report,
+)
 from phoenix.server.api.types.CostBreakdown import CostBreakdown
 from phoenix.server.api.types.DatasetSplit import DatasetSplit
 from phoenix.server.api.types.DatasetVersion import DatasetVersion
@@ -253,6 +257,73 @@ class Experiment(Node):
     async def average_run_latency_ms(self, info: Info[Context, None]) -> Optional[float]:
         latency_ms = await info.context.data_loaders.average_experiment_run_latency.load(self.id)
         return latency_ms
+
+    @strawberry.field
+    async def latency_ms_stdev(self, info: Info[Context, None]) -> Optional[float]:
+        """Get the standard deviation of run latency in milliseconds."""
+        experiment_id = self.id
+        async with info.context.db() as session:
+            result = await session.scalar(
+                select(
+                    func.stddev(
+                        func.extract("EPOCH", models.ExperimentRun.end_time)
+                        - func.extract("EPOCH", models.ExperimentRun.start_time)
+                    )
+                    * 1000
+                ).where(models.ExperimentRun.experiment_id == experiment_id)
+            )
+        return result
+
+    @strawberry.field
+    async def classification_metric(
+        self,
+        info: Info[Context, None],
+        metric: str,
+    ) -> Optional[float]:
+        """Get classification metrics (precision, recall, f1, support) for experiment."""
+        metric_str = metric.lower() if hasattr(metric, 'lower') else str(metric).lower()
+        project_id = None
+        if self.db_record:
+            project_name = self.db_record.project_name
+        else:
+            project_name = await info.context.data_loaders.experiment_fields.load(
+                (self.id, models.Experiment.project_name),
+            )
+        if project_name:
+            project = await info.context.data_loaders.project_by_name.load(project_name)
+            if project:
+                project_id = project.id
+        if project_id is None:
+            return None
+        return await info.context.data_loaders.classification_metrics.load(
+            (project_id, None, None, metric_str)
+        )
+
+    @strawberry.field
+    async def classification_report(
+        self,
+        info: Info[Context, None],
+    ) -> Optional[ClassificationReport]:
+        """Get full classification report with per-class metrics for experiment."""
+        project_id = None
+        if self.db_record:
+            project_name = self.db_record.project_name
+        else:
+            project_name = await info.context.data_loaders.experiment_fields.load(
+                (self.id, models.Experiment.project_name),
+            )
+        if project_name:
+            project = await info.context.data_loaders.project_by_name.load(project_name)
+            if project:
+                project_id = project.id
+        if project_id is None:
+            return None
+        metrics_data = await info.context.data_loaders.classification_metrics.load(
+            (project_id, None, None, "report", self.id)
+        )
+        if not metrics_data:
+            return None
+        return build_classification_report(metrics_data)
 
     @strawberry.field
     async def project(

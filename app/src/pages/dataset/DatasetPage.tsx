@@ -11,14 +11,16 @@ import {
   LazyTabPanel,
   Loading,
   PageHeader,
+  Switch,
   Tab,
   TabList,
   Tabs,
   Token,
+  View,
 } from "@phoenix/components";
 import { DatasetLabelConfigButton } from "@phoenix/components/dataset";
 import { Truncate } from "@phoenix/components/utility/Truncate";
-import { DatasetProvider } from "@phoenix/contexts/DatasetContext";
+import { DatasetProvider, useDatasetContext } from "@phoenix/contexts/DatasetContext";
 import { useFeatureFlag } from "@phoenix/contexts/FeatureFlagsContext";
 import { datasetLoader } from "@phoenix/pages/dataset/datasetLoader";
 
@@ -162,6 +164,15 @@ function DatasetPageContent({
   // Set the initial tab
   const location = useLocation();
   const initialIndex = getTabIndexFromPathname(location.pathname);
+  const isExperimentsTab = initialIndex === 0;
+
+  const showEvaluatorColumns = useDatasetContext(
+    (state) => state.showEvaluatorColumns
+  );
+  const setShowEvaluatorColumns = useDatasetContext(
+    (state) => state.setShowEvaluatorColumns
+  );
+
   return (
     <main css={mainCSS}>
       <PageHeader
@@ -194,6 +205,15 @@ function DatasetPageContent({
         subTitle={dataset.description || "--"}
         extra={
           <Flex direction="row" gap="size-100" alignItems="center">
+            {isExperimentsTab && (
+              <Switch
+                labelPlacement="start"
+                isSelected={showEvaluatorColumns}
+                onChange={(isSelected) => setShowEvaluatorColumns(isSelected)}
+              >
+                Show Evaluators
+              </Switch>
+            )}
             <DatasetDownloadMenu datasetId={dataset.id} />
             <DatasetLabelConfigButton datasetId={dataset.id} />
             <RunDatasetExperimentButton variant="primary" size="M" />

@@ -28,6 +28,7 @@ import {
 } from "@phoenix/components";
 import { AnnotationColorSwatch } from "@phoenix/components/annotation";
 import {
+  ClassificationReportTooltip,
   ExperimentTokenCount,
   SequenceNumberToken,
 } from "@phoenix/components/experiment";
@@ -47,6 +48,7 @@ import { LatencyText } from "@phoenix/components/trace/LatencyText";
 import { Truncate } from "@phoenix/components/utility/Truncate";
 import { useWordColor } from "@phoenix/hooks/useWordColor";
 import { calculateAnnotationScorePercentile } from "@phoenix/pages/experiment/utils";
+import { useDatasetContext } from "@phoenix/contexts/DatasetContext";
 import {
   floatFormatter,
   formatPercent,
@@ -63,6 +65,26 @@ import { ErrorRateCell } from "./ErrorRateCell";
 import { ExperimentSelectionToolbar } from "./ExperimentSelectionToolbar";
 
 const PAGE_SIZE = 100;
+
+function getColor(value: number) {
+  if (value < 0.60) return "red";
+  if (value < 0.65) return "orangered";
+  if (value < 0.70) return "orange";
+  if (value < 0.75) return "gold";
+  if (value < 0.80) return "yellow";
+  if (value < 0.85) return "yellowgreen";
+  if (value < 0.90) return "limegreen";
+  if (value < 0.95) return "green";
+  return "darkgreen";
+}
+
+/**
+ * Memoized latency thresholds to avoid object recreation on each render.
+ * - fast: < 3 seconds (green)
+ * - moderate: 3-8 seconds (yellow)
+ * - slow: > 8 seconds (red)
+ */
+const LATENCY_THRESHOLDS = { fast: 3000, moderate: 8000 } as const;
 
 const defaultColumnSettings = {
   minSize: 100,
@@ -165,6 +187,28 @@ export function ExperimentsTable({
                 runCount
                 repetitions
                 averageRunLatencyMs
+                latencyMsStdev
+                f1Score: classificationMetric(metric: "f1")
+                precision: classificationMetric(metric: "precision")
+                recall: classificationMetric(metric: "recall")
+                support: classificationMetric(metric: "support")
+                classificationReport {
+                  weightedAvg {
+                    precision
+                    recall
+                    f1
+                    support
+                  }
+                  perClass {
+                    className
+                    metrics {
+                      precision
+                      recall
+                      f1
+                      support
+                    }
+                  }
+                }
                 project {
                   id
                 }
@@ -222,11 +266,11 @@ export function ExperimentsTable({
           {} as Record<
             string,
             | {
-                annotationName: string;
-                meanScore: number | null;
-                annotatedCount: number;
-                totalRunCount: number;
-              }
+              annotationName: string;
+              meanScore: number | null;
+              annotatedCount: number;
+              totalRunCount: number;
+            }
             | undefined
           >
         );
@@ -236,6 +280,10 @@ export function ExperimentsTable({
         };
       }),
     [data.experiments.edges]
+  );
+
+  const showEvaluatorColumns = useDatasetContext(
+    (state) => state.showEvaluatorColumns
   );
 
   type TableRow = (typeof tableData)[number];
@@ -379,6 +427,133 @@ export function ExperimentsTable({
       cell: IntCell,
     },
     {
+      header: "Precision",
+      accessorKey: "precision",
+      meta: {
+        textAlign: "right",
+      },
+      cell: ({ getValue, row }) => {
+        const value = getValue() as number | null;
+        if (value === null || typeof value !== "number") {
+          return <span css={css`float: right;`}>--</span>;
+        }
+        const color = getColor(value);
+        return (
+          <ClassificationReportTooltip
+            classificationReport={row.original.classificationReport}
+            experimentName={row.original.name}
+            metricKey="precision"
+          >
+            <div
+              css={css`
+                float: right;
+                --mod-barloader-fill-color: ${color};
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                gap: var(--ac-global-dimension-size-100);
+              `}
+            >
+              {(value * 100).toFixed(1)}%
+              <ProgressBar width="40px" value={value * 100} />
+            </div>
+          </ClassificationReportTooltip>
+        );
+      },
+    },
+    {
+      header: "Recall",
+      accessorKey: "recall",
+      meta: {
+        textAlign: "right",
+      },
+      cell: ({ getValue, row }) => {
+        const value = getValue() as number | null;
+        if (value === null || typeof value !== "number") {
+          return <span css={css`float: right;`}>--</span>;
+        }
+        const color = getColor(value);
+        return (
+          <ClassificationReportTooltip
+            classificationReport={row.original.classificationReport}
+            experimentName={row.original.name}
+            metricKey="recall"
+          >
+            <div
+              css={css`
+                float: right;
+                --mod-barloader-fill-color: ${color};
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                gap: var(--ac-global-dimension-size-100);
+              `}
+            >
+              {(value * 100).toFixed(1)}%
+              <ProgressBar width="40px" value={value * 100} />
+            </div>
+          </ClassificationReportTooltip>
+        );
+      },
+    },
+    {
+      header: "F1 Score",
+      accessorKey: "f1Score",
+      meta: {
+        textAlign: "right",
+      },
+      cell: ({ getValue, row }) => {
+        const value = getValue() as number | null;
+        if (value === null || typeof value !== "number") {
+          return <span css={css`float: right;`}>--</span>;
+        }
+        const color = getColor(value);
+        return (
+          <ClassificationReportTooltip
+            classificationReport={row.original.classificationReport}
+            experimentName={row.original.name}
+            metricKey="f1"
+          >
+            <div
+              css={css`
+                float: right;
+                --mod-barloader-fill-color: ${color};
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                gap: var(--ac-global-dimension-size-100);
+              `}
+            >
+              {(value * 100).toFixed(1)}%
+              <ProgressBar width="40px" value={value * 100} />
+            </div>
+          </ClassificationReportTooltip>
+        );
+      },
+    },
+    {
+      header: "Support",
+      accessorKey: "support",
+      meta: {
+        textAlign: "right",
+      },
+      cell: ({ getValue, row }) => {
+        const value = getValue() as number | null;
+        if (value === null || typeof value !== "number") {
+          return <span css={css`float: right;`}>--</span>;
+        }
+        return (
+          <ClassificationReportTooltip
+            classificationReport={row.original.classificationReport}
+            experimentName={row.original.name}
+            metricKey="support"
+          >
+            <span css={css`float: right;`}>{value.toLocaleString()}</span>
+          </ClassificationReportTooltip>
+        );
+      },
+    },
+    {
       header: "avg latency",
       accessorKey: "averageRunLatencyMs",
       meta: {
@@ -389,7 +564,21 @@ export function ExperimentsTable({
         if (value === null || typeof value !== "number") {
           return "--";
         }
-        return <LatencyText latencyMs={value} />;
+        return <LatencyText latencyMs={value} latencyThresholds={LATENCY_THRESHOLDS} />;
+      },
+    },
+    {
+      header: "stdev latency",
+      accessorKey: "latencyMsStdev",
+      meta: {
+        textAlign: "right",
+      },
+      cell: ({ getValue }) => {
+        const value = getValue();
+        if (value === null || typeof value !== "number") {
+          return "--";
+        }
+        return <LatencyText latencyMs={value} latencyThresholds={LATENCY_THRESHOLDS} />;
       },
     },
     {
@@ -480,7 +669,7 @@ export function ExperimentsTable({
   ];
 
   const table = useReactTable<TableRow>({
-    columns: [...baseColumns, ...annotationColumns, ...tailColumns],
+    columns: [...baseColumns, ...(showEvaluatorColumns ? annotationColumns : []), ...tailColumns],
     data: tableData,
     state: {
       rowSelection,
@@ -582,9 +771,8 @@ export function ExperimentsTable({
                         {...{
                           onMouseDown: header.getResizeHandler(),
                           onTouchStart: header.getResizeHandler(),
-                          className: `resizer ${
-                            header.column.getIsResizing() ? "isResizing" : ""
-                          }`,
+                          className: `resizer ${header.column.getIsResizing() ? "isResizing" : ""
+                            }`,
                         }}
                       />
                     </>

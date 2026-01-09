@@ -63,7 +63,7 @@ export function ExperimentsPage() {
           </View>
         </Panel>
       </PanelGroup>
-      <Suspense>
+      <Suspense fallback={null}>
         <Outlet />
       </Suspense>
     </>

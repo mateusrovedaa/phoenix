@@ -1,5 +1,22 @@
 # Changelog
 
+## [Detecta-Integra Customizations]
+### Added
+- New dataloader for classification metrics (precision, recall, f1, support)
+- Classification Report tooltip in experiments table
+- Show Evaluators toggle in experiments and dataset pages
+- Column resizing and sorting in experiments table
+- Standard deviation for run latency
+
+### Changed
+- Updated the `ProjectPageHeader` component to display classification metrics
+- Updated the `ExperimentsTable` component with custom columns
+- Updated the `schema.graphql` file to include the classification metrics
+
+### Based on Phoenix v12.28.1 (2026-01-07)
+
+---
+
 ## [12.28.1](https://github.com/Arize-ai/phoenix/compare/arize-phoenix-v12.28.0...arize-phoenix-v12.28.1) (2026-01-07)
 
 

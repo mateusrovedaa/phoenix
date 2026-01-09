@@ -30,6 +30,10 @@ export interface DatasetStoreProps {
    * Track if the latest version is being refreshed
    */
   isRefreshingLatestVersion: boolean;
+  /**
+   * Controls visibility of evaluator columns in experiments table
+   */
+  showEvaluatorColumns: boolean;
 }
 
 export type InitialDatasetStoreProps = Pick<
@@ -42,6 +46,10 @@ export interface DatasetStoreState extends DatasetStoreProps {
    * Refreshes the latest version of the dataset
    */
   refreshLatestVersion: () => void;
+  /**
+   * Toggles the visibility of evaluator columns in experiments table
+   */
+  setShowEvaluatorColumns: (show: boolean) => void;
 }
 
 export const createDatasetStore = (initialProps: InitialDatasetStoreProps) => {
@@ -51,6 +59,7 @@ export const createDatasetStore = (initialProps: InitialDatasetStoreProps) => {
   > = (set, get) => ({
     ...initialProps,
     isRefreshingLatestVersion: false,
+    showEvaluatorColumns: false, // Default to hidden as requested
     refreshLatestVersion: async () => {
       const dataset = get();
       set({ isRefreshingLatestVersion: true }, false, {
@@ -64,6 +73,9 @@ export const createDatasetStore = (initialProps: InitialDatasetStoreProps) => {
         false,
         { type: "refreshLatestVersionSuccess" }
       );
+    },
+    setShowEvaluatorColumns: (show: boolean) => {
+      set({ showEvaluatorColumns: show });
     },
   });
   return create<DatasetStoreState>()(

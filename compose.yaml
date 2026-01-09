@@ -1,0 +1,40 @@
+services:
+  phoenix:
+    build:
+      dockerfile: ./Dockerfile
+      context: .
+    container_name: phoenix-app
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - 6006:6006
+      - 4317:4317
+    environment:
+      - PHOENIX_SQL_DATABASE_URL=postgresql://postgres:postgres@db:5432/phoenix
+    restart: unless-stopped
+
+  db:
+    image: postgres:17.4
+    container_name: phoenix-db
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=phoenix
+    ports:
+      - "5432:5432"
+    volumes:
+      - database_data:/var/lib/postgresql/data
+      # Scripts são executados em ordem alfabética na primeira execução
+      - ./init-db/00-create-roles.sql:/docker-entrypoint-initdb.d/00-create-roles.sql:ro
+      - ../../backup_20260108.sql:/docker-entrypoint-initdb.d/01-backup.sql:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d phoenix" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  database_data:
+    driver: local

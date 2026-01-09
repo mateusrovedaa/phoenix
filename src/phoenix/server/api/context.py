@@ -20,6 +20,7 @@ from phoenix.server.api.dataloaders import (
     AverageExperimentRepeatedRunGroupLatencyDataLoader,
     AverageExperimentRunLatencyDataLoader,
     CacheForDataLoaders,
+    ClassificationMetricsDataLoader,
     DatasetDatasetSplitsDataLoader,
     DatasetExampleRevisionsDataLoader,
     DatasetExamplesAndVersionsByExperimentRunDataLoader,
@@ -197,6 +198,7 @@ class DataLoaders:
     user_api_key_fields: TableFieldsDataLoader
     user_fields: TableFieldsDataLoader
     users: UsersDataLoader
+    classification_metrics: ClassificationMetricsDataLoader
 
 
 class _NoOp:

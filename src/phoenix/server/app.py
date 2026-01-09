@@ -88,6 +88,7 @@ from phoenix.server.api.dataloaders import (
     AverageExperimentRepeatedRunGroupLatencyDataLoader,
     AverageExperimentRunLatencyDataLoader,
     CacheForDataLoaders,
+    ClassificationMetricsDataLoader,
     DatasetDatasetSplitsDataLoader,
     DatasetExampleRevisionsDataLoader,
     DatasetExamplesAndVersionsByExperimentRunDataLoader,
@@ -873,6 +874,14 @@ def create_graphql_router(
                 user_api_key_fields=TableFieldsDataLoader(db, models.ApiKey),
                 user_fields=TableFieldsDataLoader(db, models.User),
                 user_roles=UserRolesDataLoader(db),
+                classification_metrics=ClassificationMetricsDataLoader(
+                    db,
+                    cache_map=(
+                        cache_for_dataloaders.classification_metrics
+                        if cache_for_dataloaders
+                        else None
+                    ),
+                ),
             ),
             cache_for_dataloaders=cache_for_dataloaders,
             read_only=read_only,

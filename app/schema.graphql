@@ -349,6 +349,26 @@ input ClonePromptInput {
   metadata: JSON
 }
 
+"""Class-level metrics for classification report."""
+type ClassMetrics {
+  precision: Float
+  recall: Float
+  f1: Float
+  support: Float
+}
+
+"""Per-class classification metrics."""
+type PerClassMetrics {
+  className: String!
+  metrics: ClassMetrics!
+}
+
+"""Full classification report with weighted averages and per-class breakdown."""
+type ClassificationReport {
+  weightedAvg: ClassMetrics
+  perClass: [PerClassMetrics!]
+}
+
 type Cluster {
   """The ID of the cluster"""
   id: ID!
@@ -1277,6 +1297,9 @@ type Experiment implements Node {
   annotationSummaries: [ExperimentAnnotationSummary!]!
   errorRate: Float
   averageRunLatencyMs: Float
+  latencyMsStdev: Float
+  classificationMetric(metric: String!): Float
+  classificationReport: ClassificationReport
   project: Project
   lastUpdatedAt: DateTime
   costSummary: SpanCostSummary!

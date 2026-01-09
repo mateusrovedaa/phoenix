@@ -10,6 +10,10 @@ from .average_experiment_repeated_run_group_latency import (
     AverageExperimentRepeatedRunGroupLatencyDataLoader,
 )
 from .average_experiment_run_latency import AverageExperimentRunLatencyDataLoader
+from .classification_metrics import (
+    ClassificationMetricsCache,
+    ClassificationMetricsDataLoader,
+)
 from .dataset_dataset_splits import DatasetDatasetSplitsDataLoader
 from .dataset_example_revisions import DatasetExampleRevisionsDataLoader
 from .dataset_example_spans import DatasetExampleSpansDataLoader
@@ -90,6 +94,7 @@ __all__ = [
     "AverageExperimentRepeatedRunGroupLatencyDataLoader",
     "AverageExperimentRunLatencyDataLoader",
     "CacheForDataLoaders",
+    "ClassificationMetricsDataLoader",
     "DatasetDatasetSplitsDataLoader",
     "DatasetExampleRevisionsDataLoader",
     "DatasetExampleSpansDataLoader",
@@ -176,4 +181,7 @@ class CacheForDataLoaders:
     )
     token_cost: SpanCostSummaryCache = field(
         default_factory=SpanCostSummaryCache,
+    )
+    classification_metrics: ClassificationMetricsCache = field(
+        default_factory=ClassificationMetricsCache,
     )
