@@ -1,0 +1,1742 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e660f59a3..d1bcb6e68 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,22 @@
+ # Changelog
+ 
++## [Detecta-Integra Customizations]
++### Added
++- New dataloader for classification metrics (precision, recall, f1, support)
++- Classification Report tooltip in experiments table
++- Show Evaluators toggle in experiments and dataset pages
++- Column resizing and sorting in experiments table
++- Standard deviation for run latency
++
++### Changed
++- Updated the `ProjectPageHeader` component to display classification metrics
++- Updated the `ExperimentsTable` component with custom columns
++- Updated the `schema.graphql` file to include the classification metrics
++
++### Based on Phoenix v12.28.1 (2026-01-07)
++
++---
++
+ ## [12.28.1](https://github.com/Arize-ai/phoenix/compare/arize-phoenix-v12.28.0...arize-phoenix-v12.28.1) (2026-01-07)
+ 
+ 
+diff --git a/app/schema.graphql b/app/schema.graphql
+index 347d42eed..25e5b99a7 100644
+--- a/app/schema.graphql
++++ b/app/schema.graphql
+@@ -349,6 +349,26 @@ input ClonePromptInput {
+   metadata: JSON
+ }
+ 
++"""Class-level metrics for classification report."""
++type ClassMetrics {
++  precision: Float
++  recall: Float
++  f1: Float
++  support: Float
++}
++
++"""Per-class classification metrics."""
++type PerClassMetrics {
++  className: String!
++  metrics: ClassMetrics!
++}
++
++"""Full classification report with weighted averages and per-class breakdown."""
++type ClassificationReport {
++  weightedAvg: ClassMetrics
++  perClass: [PerClassMetrics!]
++}
++
+ type Cluster {
+   """The ID of the cluster"""
+   id: ID!
+@@ -1277,6 +1297,9 @@ type Experiment implements Node {
+   annotationSummaries: [ExperimentAnnotationSummary!]!
+   errorRate: Float
+   averageRunLatencyMs: Float
++  latencyMsStdev: Float
++  classificationMetric(metric: String!): Float
++  classificationReport: ClassificationReport
+   project: Project
+   lastUpdatedAt: DateTime
+   costSummary: SpanCostSummary!
+diff --git a/app/src/components/experiment/ClassificationReportTooltip.tsx b/app/src/components/experiment/ClassificationReportTooltip.tsx
+new file mode 100644
+index 000000000..e46bb9098
+--- /dev/null
++++ b/app/src/components/experiment/ClassificationReportTooltip.tsx
+@@ -0,0 +1,242 @@
++import { css } from "@emotion/react";
++import { ReactNode, useMemo } from "react";
++
++import {
++    Flex,
++    Heading,
++    RichTooltip,
++    Text,
++    TooltipTrigger,
++    TriggerWrap,
++} from "@phoenix/components";
++import { floatFormatter, formatInt } from "@phoenix/utils/numberFormatUtils";
++
++type MetricKey = "precision" | "recall" | "f1" | "support";
++
++type ClassMetrics = {
++    precision: number;
++    recall: number;
++    f1: number;
++    support: number;
++};
++
++export type ClassificationReportData = {
++    weightedAvg: ClassMetrics;
++    perClass: Array<{
++        className: string;
++        metrics: ClassMetrics;
++    }>;
++};
++
++const metricOrder: MetricKey[] = ["precision", "recall", "f1", "support"];
++const metricHeaderLabels: Record<MetricKey, string> = {
++    precision: "P",
++    recall: "R",
++    f1: "F1",
++    support: "S",
++};
++
++export type ClassificationReportTooltipProps = {
++    children: ReactNode;
++    classificationReport: ClassificationReportData | null | undefined;
++    experimentName: string;
++    metricKey: MetricKey;
++};
++
++export function ClassificationReportTooltip({
++    children,
++    classificationReport,
++    experimentName,
++    metricKey,
++}: ClassificationReportTooltipProps) {
++    const formattedReport = useMemo<ClassificationReportData | null>(() => {
++        if (!classificationReport) return null;
++        return {
++            weightedAvg: sanitizeMetrics(classificationReport.weightedAvg),
++            perClass: classificationReport.perClass.map(({ className, metrics }) => ({
++                className,
++                metrics: sanitizeMetrics(metrics),
++            })),
++        };
++    }, [classificationReport]);
++
++    return (
++        <TooltipTrigger delay={0}>
++            <TriggerWrap>{children}</TriggerWrap>
++            <RichTooltip>
++                <div css={tooltipContentStyles}>
++                    <Flex direction="column" gap="size-100">
++                        <Heading level={4} weight="heavy">
++                            Classification Report – {experimentName}
++                        </Heading>
++                        {formattedReport ? (
++                            <ClassificationReportTable
++                                metricKey={metricKey}
++                                report={formattedReport}
++                            />
++                        ) : (
++                            <Text size="S">Classification report unavailable.</Text>
++                        )}
++                    </Flex>
++                </div>
++            </RichTooltip>
++        </TooltipTrigger>
++    );
++}
++
++type ClassificationReportTableProps = {
++    metricKey: MetricKey;
++    report: ClassificationReportData;
++};
++
++function ClassificationReportTable({
++    metricKey,
++    report,
++}: ClassificationReportTableProps) {
++    const { perClass, weightedAvg } = report;
++
++    if (!perClass.length) {
++        return <Text size="S">No per-class metrics available.</Text>;
++    }
++
++    return (
++        <div css={tableContainerStyles}>
++            <table css={tableStyles}>
++                <thead>
++                    <tr>
++                        <th css={headerCellStyles}>Class</th>
++                        {metricOrder.map((key) => (
++                            <th
++                                key={key}
++                                css={[headerCellStyles, key === metricKey && highlightHeaderStyles]}
++                            >
++                                {metricHeaderLabels[key]}
++                            </th>
++                        ))}
++                    </tr>
++                </thead>
++                <tbody>
++                    {perClass.map(({ className, metrics }) => (
++                        <tr key={className}>
++                            <td css={rowLabelCellStyles}>{className}</td>
++                            {metricOrder.map((key) => (
++                                <td
++                                    key={key}
++                                    css={[cellStyles, key === metricKey && highlightCellStyles]}
++                                >
++                                    {formatMetric(key, metrics[key])}
++                                </td>
++                            ))}
++                        </tr>
++                    ))}
++                    <tr>
++                        <td colSpan={metricOrder.length + 1} css={spacingRowStyles} />
++                    </tr>
++                    <tr>
++                        <td css={[rowLabelCellStyles, weightedLabelStyles]}>Weighted Avg</td>
++                        {metricOrder.map((key) => (
++                            <td
++                                key={key}
++                                css={[cellStyles, key === metricKey && highlightCellStyles]}
++                            >
++                                {formatMetric(key, weightedAvg[key])}
++                            </td>
++                        ))}
++                    </tr>
++                </tbody>
++            </table>
++        </div>
++    );
++}
++
++function formatMetric(metricKey: MetricKey, value: number) {
++    if (metricKey === "support") {
++        return formatInt(Math.round(value));
++    }
++    return floatFormatter(value);
++}
++
++function sanitizeMetrics(metrics: ClassMetrics): ClassMetrics {
++    return {
++        precision: safeNumber(metrics.precision),
++        recall: safeNumber(metrics.recall),
++        f1: safeNumber(metrics.f1),
++        support: safeNumber(metrics.support),
++    };
++}
++
++function safeNumber(value: number | null | undefined): number {
++    if (typeof value !== "number" || Number.isNaN(value)) {
++        return 0;
++    }
++    return value;
++}
++
++const tableContainerStyles = css`
++  overflow-x: auto;
++`;
++
++const tableStyles = css`
++  width: 100%;
++  border-collapse: collapse;
++  font-size: var(--ac-global-font-size-75);
++  white-space: nowrap;
++`;
++
++const headerCellStyles = css`
++  padding: var(--ac-global-dimension-size-75)
++    var(--ac-global-dimension-size-125);
++  text-align: right;
++  border-bottom: 1px solid var(--ac-global-color-grey-300);
++  background-color: var(--ac-global-background-color-dark);
++  color: var(--ac-global-text-color-900);
++
++  &:first-of-type {
++    text-align: left;
++  }
++`;
++
++const cellStyles = css`
++  padding: var(--ac-global-dimension-size-75)
++    var(--ac-global-dimension-size-125);
++  text-align: right;
++  border-bottom: 1px solid var(--ac-global-color-grey-200);
++  color: var(--ac-global-text-color-900);
++`;
++
++const rowLabelCellStyles = css`
++  ${cellStyles};
++  text-align: left;
++  font-weight: 500;
++`;
++
++const weightedLabelStyles = css`
++  font-weight: 600;
++`;
++
++const highlightCellStyles = css`
++  font-weight: 600;
++  background-color: var(--ac-global-color-primary-200, rgba(37, 99, 235, 0.12));
++`;
++
++const highlightHeaderStyles = css`
++  font-weight: 700;
++  background-color: var(--ac-global-color-primary-300, rgba(37, 99, 235, 0.2));
++`;
++
++const spacingRowStyles = css`
++  padding: 0;
++  height: var(--ac-global-dimension-size-100);
++  border: none;
++  background: transparent;
++`;
++
++const tooltipContentStyles = css`
++  min-width: 400px;
++  max-width: 600px;
++  width: max-content;
++  background-color: var(--ac-global-background-color-dark);
++  padding: var(--ac-global-dimension-size-100);
++  border-radius: var(--ac-global-rounding-small);
++`;
++
+diff --git a/app/src/components/experiment/index.tsx b/app/src/components/experiment/index.tsx
+index 0ea645657..b23bdd979 100644
+--- a/app/src/components/experiment/index.tsx
++++ b/app/src/components/experiment/index.tsx
+@@ -9,3 +9,4 @@ export * from "./ExperimentTokenCountDetails";
+ export * from "./ExperimentAverageRunTokenCosts";
+ export * from "./ExperimentCodeModal";
+ export * from "./RunExperimentCodeDialog";
++export * from "./ClassificationReportTooltip";
+diff --git a/app/src/pages/dataset/DatasetPage.tsx b/app/src/pages/dataset/DatasetPage.tsx
+index 507fb972f..081ce6392 100644
+--- a/app/src/pages/dataset/DatasetPage.tsx
++++ b/app/src/pages/dataset/DatasetPage.tsx
+@@ -11,14 +11,16 @@ import {
+   LazyTabPanel,
+   Loading,
+   PageHeader,
++  Switch,
+   Tab,
+   TabList,
+   Tabs,
+   Token,
++  View,
+ } from "@phoenix/components";
+ import { DatasetLabelConfigButton } from "@phoenix/components/dataset";
+ import { Truncate } from "@phoenix/components/utility/Truncate";
+-import { DatasetProvider } from "@phoenix/contexts/DatasetContext";
++import { DatasetProvider, useDatasetContext } from "@phoenix/contexts/DatasetContext";
+ import { useFeatureFlag } from "@phoenix/contexts/FeatureFlagsContext";
+ import { datasetLoader } from "@phoenix/pages/dataset/datasetLoader";
+ 
+@@ -162,6 +164,15 @@ function DatasetPageContent({
+   // Set the initial tab
+   const location = useLocation();
+   const initialIndex = getTabIndexFromPathname(location.pathname);
++  const isExperimentsTab = initialIndex === 0;
++
++  const showEvaluatorColumns = useDatasetContext(
++    (state) => state.showEvaluatorColumns
++  );
++  const setShowEvaluatorColumns = useDatasetContext(
++    (state) => state.setShowEvaluatorColumns
++  );
++
+   return (
+     <main css={mainCSS}>
+       <PageHeader
+@@ -194,6 +205,15 @@ function DatasetPageContent({
+         subTitle={dataset.description || "--"}
+         extra={
+           <Flex direction="row" gap="size-100" alignItems="center">
++            {isExperimentsTab && (
++              <Switch
++                labelPlacement="start"
++                isSelected={showEvaluatorColumns}
++                onChange={(isSelected) => setShowEvaluatorColumns(isSelected)}
++              >
++                Show Evaluators
++              </Switch>
++            )}
+             <DatasetDownloadMenu datasetId={dataset.id} />
+             <DatasetLabelConfigButton datasetId={dataset.id} />
+             <RunDatasetExperimentButton variant="primary" size="M" />
+diff --git a/app/src/pages/experiments/ExperimentsPage.tsx b/app/src/pages/experiments/ExperimentsPage.tsx
+index baa5736a5..d5738ab7d 100644
+--- a/app/src/pages/experiments/ExperimentsPage.tsx
++++ b/app/src/pages/experiments/ExperimentsPage.tsx
+@@ -63,7 +63,7 @@ export function ExperimentsPage() {
+           </View>
+         </Panel>
+       </PanelGroup>
+-      <Suspense>
++      <Suspense fallback={null}>
+         <Outlet />
+       </Suspense>
+     </>
+diff --git a/app/src/pages/experiments/ExperimentsTable.tsx b/app/src/pages/experiments/ExperimentsTable.tsx
+index d784b397c..fb3099fdf 100644
+--- a/app/src/pages/experiments/ExperimentsTable.tsx
++++ b/app/src/pages/experiments/ExperimentsTable.tsx
+@@ -28,6 +28,7 @@ import {
+ } from "@phoenix/components";
+ import { AnnotationColorSwatch } from "@phoenix/components/annotation";
+ import {
++  ClassificationReportTooltip,
+   ExperimentTokenCount,
+   SequenceNumberToken,
+ } from "@phoenix/components/experiment";
+@@ -47,6 +48,7 @@ import { LatencyText } from "@phoenix/components/trace/LatencyText";
+ import { Truncate } from "@phoenix/components/utility/Truncate";
+ import { useWordColor } from "@phoenix/hooks/useWordColor";
+ import { calculateAnnotationScorePercentile } from "@phoenix/pages/experiment/utils";
++import { useDatasetContext } from "@phoenix/contexts/DatasetContext";
+ import {
+   floatFormatter,
+   formatPercent,
+@@ -64,6 +66,26 @@ import { ExperimentSelectionToolbar } from "./ExperimentSelectionToolbar";
+ 
+ const PAGE_SIZE = 100;
+ 
++function getColor(value: number) {
++  if (value < 0.60) return "red";
++  if (value < 0.65) return "orangered";
++  if (value < 0.70) return "orange";
++  if (value < 0.75) return "gold";
++  if (value < 0.80) return "yellow";
++  if (value < 0.85) return "yellowgreen";
++  if (value < 0.90) return "limegreen";
++  if (value < 0.95) return "green";
++  return "darkgreen";
++}
++
++/**
++ * Memoized latency thresholds to avoid object recreation on each render.
++ * - fast: < 3 seconds (green)
++ * - moderate: 3-8 seconds (yellow)
++ * - slow: > 8 seconds (red)
++ */
++const LATENCY_THRESHOLDS = { fast: 3000, moderate: 8000 } as const;
++
+ const defaultColumnSettings = {
+   minSize: 100,
+ } satisfies Partial<ColumnDef<unknown>>;
+@@ -165,6 +187,28 @@ export function ExperimentsTable({
+                 runCount
+                 repetitions
+                 averageRunLatencyMs
++                latencyMsStdev
++                f1Score: classificationMetric(metric: "f1")
++                precision: classificationMetric(metric: "precision")
++                recall: classificationMetric(metric: "recall")
++                support: classificationMetric(metric: "support")
++                classificationReport {
++                  weightedAvg {
++                    precision
++                    recall
++                    f1
++                    support
++                  }
++                  perClass {
++                    className
++                    metrics {
++                      precision
++                      recall
++                      f1
++                      support
++                    }
++                  }
++                }
+                 project {
+                   id
+                 }
+@@ -222,11 +266,11 @@ export function ExperimentsTable({
+           {} as Record<
+             string,
+             | {
+-                annotationName: string;
+-                meanScore: number | null;
+-                annotatedCount: number;
+-                totalRunCount: number;
+-              }
++              annotationName: string;
++              meanScore: number | null;
++              annotatedCount: number;
++              totalRunCount: number;
++            }
+             | undefined
+           >
+         );
+@@ -238,6 +282,10 @@ export function ExperimentsTable({
+     [data.experiments.edges]
+   );
+ 
++  const showEvaluatorColumns = useDatasetContext(
++    (state) => state.showEvaluatorColumns
++  );
++
+   type TableRow = (typeof tableData)[number];
+ 
+   const baseColumns: ColumnDef<TableRow>[] = [
+@@ -378,6 +426,133 @@ export function ExperimentsTable({
+       },
+       cell: IntCell,
+     },
++    {
++      header: "Precision",
++      accessorKey: "precision",
++      meta: {
++        textAlign: "right",
++      },
++      cell: ({ getValue, row }) => {
++        const value = getValue() as number | null;
++        if (value === null || typeof value !== "number") {
++          return <span css={css`float: right;`}>--</span>;
++        }
++        const color = getColor(value);
++        return (
++          <ClassificationReportTooltip
++            classificationReport={row.original.classificationReport}
++            experimentName={row.original.name}
++            metricKey="precision"
++          >
++            <div
++              css={css`
++                float: right;
++                --mod-barloader-fill-color: ${color};
++                display: flex;
++                flex-direction: row;
++                align-items: center;
++                gap: var(--ac-global-dimension-size-100);
++              `}
++            >
++              {(value * 100).toFixed(1)}%
++              <ProgressBar width="40px" value={value * 100} />
++            </div>
++          </ClassificationReportTooltip>
++        );
++      },
++    },
++    {
++      header: "Recall",
++      accessorKey: "recall",
++      meta: {
++        textAlign: "right",
++      },
++      cell: ({ getValue, row }) => {
++        const value = getValue() as number | null;
++        if (value === null || typeof value !== "number") {
++          return <span css={css`float: right;`}>--</span>;
++        }
++        const color = getColor(value);
++        return (
++          <ClassificationReportTooltip
++            classificationReport={row.original.classificationReport}
++            experimentName={row.original.name}
++            metricKey="recall"
++          >
++            <div
++              css={css`
++                float: right;
++                --mod-barloader-fill-color: ${color};
++                display: flex;
++                flex-direction: row;
++                align-items: center;
++                gap: var(--ac-global-dimension-size-100);
++              `}
++            >
++              {(value * 100).toFixed(1)}%
++              <ProgressBar width="40px" value={value * 100} />
++            </div>
++          </ClassificationReportTooltip>
++        );
++      },
++    },
++    {
++      header: "F1 Score",
++      accessorKey: "f1Score",
++      meta: {
++        textAlign: "right",
++      },
++      cell: ({ getValue, row }) => {
++        const value = getValue() as number | null;
++        if (value === null || typeof value !== "number") {
++          return <span css={css`float: right;`}>--</span>;
++        }
++        const color = getColor(value);
++        return (
++          <ClassificationReportTooltip
++            classificationReport={row.original.classificationReport}
++            experimentName={row.original.name}
++            metricKey="f1"
++          >
++            <div
++              css={css`
++                float: right;
++                --mod-barloader-fill-color: ${color};
++                display: flex;
++                flex-direction: row;
++                align-items: center;
++                gap: var(--ac-global-dimension-size-100);
++              `}
++            >
++              {(value * 100).toFixed(1)}%
++              <ProgressBar width="40px" value={value * 100} />
++            </div>
++          </ClassificationReportTooltip>
++        );
++      },
++    },
++    {
++      header: "Support",
++      accessorKey: "support",
++      meta: {
++        textAlign: "right",
++      },
++      cell: ({ getValue, row }) => {
++        const value = getValue() as number | null;
++        if (value === null || typeof value !== "number") {
++          return <span css={css`float: right;`}>--</span>;
++        }
++        return (
++          <ClassificationReportTooltip
++            classificationReport={row.original.classificationReport}
++            experimentName={row.original.name}
++            metricKey="support"
++          >
++            <span css={css`float: right;`}>{value.toLocaleString()}</span>
++          </ClassificationReportTooltip>
++        );
++      },
++    },
+     {
+       header: "avg latency",
+       accessorKey: "averageRunLatencyMs",
+@@ -389,7 +564,21 @@ export function ExperimentsTable({
+         if (value === null || typeof value !== "number") {
+           return "--";
+         }
+-        return <LatencyText latencyMs={value} />;
++        return <LatencyText latencyMs={value} latencyThresholds={LATENCY_THRESHOLDS} />;
++      },
++    },
++    {
++      header: "stdev latency",
++      accessorKey: "latencyMsStdev",
++      meta: {
++        textAlign: "right",
++      },
++      cell: ({ getValue }) => {
++        const value = getValue();
++        if (value === null || typeof value !== "number") {
++          return "--";
++        }
++        return <LatencyText latencyMs={value} latencyThresholds={LATENCY_THRESHOLDS} />;
+       },
+     },
+     {
+@@ -480,7 +669,7 @@ export function ExperimentsTable({
+   ];
+ 
+   const table = useReactTable<TableRow>({
+-    columns: [...baseColumns, ...annotationColumns, ...tailColumns],
++    columns: [...baseColumns, ...(showEvaluatorColumns ? annotationColumns : []), ...tailColumns],
+     data: tableData,
+     state: {
+       rowSelection,
+@@ -582,9 +771,8 @@ export function ExperimentsTable({
+                         {...{
+                           onMouseDown: header.getResizeHandler(),
+                           onTouchStart: header.getResizeHandler(),
+-                          className: `resizer ${
+-                            header.column.getIsResizing() ? "isResizing" : ""
+-                          }`,
++                          className: `resizer ${header.column.getIsResizing() ? "isResizing" : ""
++                            }`,
+                         }}
+                       />
+                     </>
+diff --git a/app/src/pages/project/__generated__/ProjectPageHeader_stats.graphql.ts b/app/src/pages/project/__generated__/ProjectPageHeader_stats.graphql.ts
+deleted file mode 100644
+index be1dd02e2..000000000
+--- a/app/src/pages/project/__generated__/ProjectPageHeader_stats.graphql.ts
++++ /dev/null
+@@ -1,186 +0,0 @@
+-/**
+- * @generated SignedSource<<71c8c47e839e813cf689141149463973>>
+- * @lightSyntaxTransform
+- * @nogrep
+- */
+-
+-/* tslint:disable */
+-/* eslint-disable */
+-// @ts-nocheck
+-
+-import { ReaderFragment } from 'relay-runtime';
+-import { FragmentRefs } from "relay-runtime";
+-export type ProjectPageHeader_stats$data = {
+-  readonly costSummary: {
+-    readonly completion: {
+-      readonly cost: number | null;
+-    };
+-    readonly prompt: {
+-      readonly cost: number | null;
+-    };
+-    readonly total: {
+-      readonly cost: number | null;
+-    };
+-  };
+-  readonly documentEvaluationNames: ReadonlyArray<string>;
+-  readonly id: string;
+-  readonly latencyMsP50: number | null;
+-  readonly latencyMsP99: number | null;
+-  readonly spanAnnotationNames: ReadonlyArray<string>;
+-  readonly traceCount: number;
+-  readonly " $fragmentType": "ProjectPageHeader_stats";
+-};
+-export type ProjectPageHeader_stats$key = {
+-  readonly " $data"?: ProjectPageHeader_stats$data;
+-  readonly " $fragmentSpreads": FragmentRefs<"ProjectPageHeader_stats">;
+-};
+-
+-import ProjectPageHeaderQuery_graphql from './ProjectPageHeaderQuery.graphql';
+-
+-const node: ReaderFragment = (function(){
+-var v0 = {
+-  "kind": "Variable",
+-  "name": "timeRange",
+-  "variableName": "timeRange"
+-},
+-v1 = [
+-  (v0/*: any*/)
+-],
+-v2 = [
+-  {
+-    "alias": null,
+-    "args": null,
+-    "kind": "ScalarField",
+-    "name": "cost",
+-    "storageKey": null
+-  }
+-];
+-return {
+-  "argumentDefinitions": [
+-    {
+-      "kind": "RootArgument",
+-      "name": "timeRange"
+-    }
+-  ],
+-  "kind": "Fragment",
+-  "metadata": {
+-    "refetch": {
+-      "connection": null,
+-      "fragmentPathInResult": [
+-        "node"
+-      ],
+-      "operation": ProjectPageHeaderQuery_graphql,
+-      "identifierInfo": {
+-        "identifierField": "id",
+-        "identifierQueryVariableName": "id"
+-      }
+-    }
+-  },
+-  "name": "ProjectPageHeader_stats",
+-  "selections": [
+-    {
+-      "alias": null,
+-      "args": (v1/*: any*/),
+-      "kind": "ScalarField",
+-      "name": "traceCount",
+-      "storageKey": null
+-    },
+-    {
+-      "alias": null,
+-      "args": (v1/*: any*/),
+-      "concreteType": "SpanCostSummary",
+-      "kind": "LinkedField",
+-      "name": "costSummary",
+-      "plural": false,
+-      "selections": [
+-        {
+-          "alias": null,
+-          "args": null,
+-          "concreteType": "CostBreakdown",
+-          "kind": "LinkedField",
+-          "name": "total",
+-          "plural": false,
+-          "selections": (v2/*: any*/),
+-          "storageKey": null
+-        },
+-        {
+-          "alias": null,
+-          "args": null,
+-          "concreteType": "CostBreakdown",
+-          "kind": "LinkedField",
+-          "name": "prompt",
+-          "plural": false,
+-          "selections": (v2/*: any*/),
+-          "storageKey": null
+-        },
+-        {
+-          "alias": null,
+-          "args": null,
+-          "concreteType": "CostBreakdown",
+-          "kind": "LinkedField",
+-          "name": "completion",
+-          "plural": false,
+-          "selections": (v2/*: any*/),
+-          "storageKey": null
+-        }
+-      ],
+-      "storageKey": null
+-    },
+-    {
+-      "alias": "latencyMsP50",
+-      "args": [
+-        {
+-          "kind": "Literal",
+-          "name": "probability",
+-          "value": 0.5
+-        },
+-        (v0/*: any*/)
+-      ],
+-      "kind": "ScalarField",
+-      "name": "latencyMsQuantile",
+-      "storageKey": null
+-    },
+-    {
+-      "alias": "latencyMsP99",
+-      "args": [
+-        {
+-          "kind": "Literal",
+-          "name": "probability",
+-          "value": 0.99
+-        },
+-        (v0/*: any*/)
+-      ],
+-      "kind": "ScalarField",
+-      "name": "latencyMsQuantile",
+-      "storageKey": null
+-    },
+-    {
+-      "alias": null,
+-      "args": null,
+-      "kind": "ScalarField",
+-      "name": "spanAnnotationNames",
+-      "storageKey": null
+-    },
+-    {
+-      "alias": null,
+-      "args": null,
+-      "kind": "ScalarField",
+-      "name": "documentEvaluationNames",
+-      "storageKey": null
+-    },
+-    {
+-      "alias": null,
+-      "args": null,
+-      "kind": "ScalarField",
+-      "name": "id",
+-      "storageKey": null
+-    }
+-  ],
+-  "type": "Project",
+-  "abstractKey": null
+-};
+-})();
+-
+-(node as any).hash = "a82020736a81365c539d7d9a31318fa1";
+-
+-export default node;
+diff --git a/app/src/store/datasetStore.tsx b/app/src/store/datasetStore.tsx
+index 9d1c66655..75e386b43 100644
+--- a/app/src/store/datasetStore.tsx
++++ b/app/src/store/datasetStore.tsx
+@@ -30,6 +30,10 @@ export interface DatasetStoreProps {
+    * Track if the latest version is being refreshed
+    */
+   isRefreshingLatestVersion: boolean;
++  /**
++   * Controls visibility of evaluator columns in experiments table
++   */
++  showEvaluatorColumns: boolean;
+ }
+ 
+ export type InitialDatasetStoreProps = Pick<
+@@ -42,6 +46,10 @@ export interface DatasetStoreState extends DatasetStoreProps {
+    * Refreshes the latest version of the dataset
+    */
+   refreshLatestVersion: () => void;
++  /**
++   * Toggles the visibility of evaluator columns in experiments table
++   */
++  setShowEvaluatorColumns: (show: boolean) => void;
+ }
+ 
+ export const createDatasetStore = (initialProps: InitialDatasetStoreProps) => {
+@@ -51,6 +59,7 @@ export const createDatasetStore = (initialProps: InitialDatasetStoreProps) => {
+   > = (set, get) => ({
+     ...initialProps,
+     isRefreshingLatestVersion: false,
++    showEvaluatorColumns: false, // Default to hidden as requested
+     refreshLatestVersion: async () => {
+       const dataset = get();
+       set({ isRefreshingLatestVersion: true }, false, {
+@@ -65,6 +74,9 @@ export const createDatasetStore = (initialProps: InitialDatasetStoreProps) => {
+         { type: "refreshLatestVersionSuccess" }
+       );
+     },
++    setShowEvaluatorColumns: (show: boolean) => {
++      set({ showEvaluatorColumns: show });
++    },
+   });
+   return create<DatasetStoreState>()(
+     devtools(datasetStore, {
+diff --git a/app/src/utils/numberFormatUtils.ts b/app/src/utils/numberFormatUtils.ts
+index 409d9ce76..1db20f60d 100644
+--- a/app/src/utils/numberFormatUtils.ts
++++ b/app/src/utils/numberFormatUtils.ts
+@@ -43,12 +43,7 @@ export function formatFloat(float: number): string {
+   const absValue = Math.abs(float);
+   if (absValue === 0.0) return "0.00";
+   else if (absValue < 0.01) return format(".2e")(float);
+-  else if (absValue < 1) {
+-    // truncate instead of rounding to avoid displaying misleading values for averages
+-    // and draw attention to outliers (e.g. showing "0.99" instead of "1.00" when the actual value is 0.9999)
+-    const truncatedFloat = truncate(float, 2);
+-    return format("0.2f")(truncatedFloat);
+-  } else if (absValue < 1000) return format("0.2f")(float);
++  else if (absValue < 1000) return format("0.2f")(float);
+   return format("0.2s")(float);
+ }
+ 
+diff --git a/compose.yaml b/compose.yaml
+new file mode 100644
+index 000000000..c4ca9b876
+--- /dev/null
++++ b/compose.yaml
+@@ -0,0 +1,40 @@
++services:
++  phoenix:
++    build:
++      dockerfile: ./Dockerfile
++      context: .
++    container_name: phoenix-app
++    depends_on:
++      db:
++        condition: service_healthy
++    ports:
++      - 6006:6006
++      - 4317:4317
++    environment:
++      - PHOENIX_SQL_DATABASE_URL=postgresql://postgres:postgres@db:5432/phoenix
++    restart: unless-stopped
++
++  db:
++    image: postgres:17.4
++    container_name: phoenix-db
++    restart: always
++    environment:
++      - POSTGRES_USER=postgres
++      - POSTGRES_PASSWORD=postgres
++      - POSTGRES_DB=phoenix
++    ports:
++      - "5432:5432"
++    volumes:
++      - database_data:/var/lib/postgresql/data
++      # Scripts são executados em ordem alfabética na primeira execução
++      - ./init-db/00-create-roles.sql:/docker-entrypoint-initdb.d/00-create-roles.sql:ro
++      - ../backup_20260108.sql:/docker-entrypoint-initdb.d/01-backup.sql:ro
++    healthcheck:
++      test: [ "CMD-SHELL", "pg_isready -U postgres -d phoenix" ]
++      interval: 5s
++      timeout: 5s
++      retries: 10
++
++volumes:
++  database_data:
++    driver: local
+diff --git a/docker-compose.yml b/docker-compose.yml
+deleted file mode 100644
+index f8253f4c0..000000000
+--- a/docker-compose.yml
++++ /dev/null
+@@ -1,26 +0,0 @@
+-services:
+-  phoenix:
+-    build:
+-      dockerfile: ./Dockerfile
+-      context: .
+-    depends_on:
+-      - db
+-    ports:
+-      - 6006:6006
+-      - 4317:4317
+-    environment:
+-      - PHOENIX_SQL_DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+-  db:
+-    image: postgres:16
+-    restart: always
+-    environment:
+-      - POSTGRES_USER=postgres
+-      - POSTGRES_PASSWORD=postgres
+-      - POSTGRES_DB=postgres
+-    ports:
+-      - 5432
+-    volumes:
+-      - database_data:/var/lib/postgresql/data
+-volumes:
+-  database_data:
+-    driver: local
+diff --git a/init-db/00-create-roles.sql b/init-db/00-create-roles.sql
+new file mode 100644
+index 000000000..62b119584
+--- /dev/null
++++ b/init-db/00-create-roles.sql
+@@ -0,0 +1,2 @@
++-- Criar roles que podem ser referenciados no dump
++CREATE ROLE admin WITH LOGIN SUPERUSER PASSWORD 'admin';
+diff --git a/src/phoenix/server/api/context.py b/src/phoenix/server/api/context.py
+index 17b474238..1104f8fa6 100644
+--- a/src/phoenix/server/api/context.py
++++ b/src/phoenix/server/api/context.py
+@@ -20,6 +20,7 @@ from phoenix.server.api.dataloaders import (
+     AverageExperimentRepeatedRunGroupLatencyDataLoader,
+     AverageExperimentRunLatencyDataLoader,
+     CacheForDataLoaders,
++    ClassificationMetricsDataLoader,
+     DatasetDatasetSplitsDataLoader,
+     DatasetExampleRevisionsDataLoader,
+     DatasetExamplesAndVersionsByExperimentRunDataLoader,
+@@ -197,6 +198,7 @@ class DataLoaders:
+     user_api_key_fields: TableFieldsDataLoader
+     user_fields: TableFieldsDataLoader
+     users: UsersDataLoader
++    classification_metrics: ClassificationMetricsDataLoader
+ 
+ 
+ class _NoOp:
+diff --git a/src/phoenix/server/api/dataloaders/__init__.py b/src/phoenix/server/api/dataloaders/__init__.py
+index f99dab98d..ff7727894 100644
+--- a/src/phoenix/server/api/dataloaders/__init__.py
++++ b/src/phoenix/server/api/dataloaders/__init__.py
+@@ -10,6 +10,10 @@ from .average_experiment_repeated_run_group_latency import (
+     AverageExperimentRepeatedRunGroupLatencyDataLoader,
+ )
+ from .average_experiment_run_latency import AverageExperimentRunLatencyDataLoader
++from .classification_metrics import (
++    ClassificationMetricsCache,
++    ClassificationMetricsDataLoader,
++)
+ from .dataset_dataset_splits import DatasetDatasetSplitsDataLoader
+ from .dataset_example_revisions import DatasetExampleRevisionsDataLoader
+ from .dataset_example_spans import DatasetExampleSpansDataLoader
+@@ -90,6 +94,7 @@ __all__ = [
+     "AverageExperimentRepeatedRunGroupLatencyDataLoader",
+     "AverageExperimentRunLatencyDataLoader",
+     "CacheForDataLoaders",
++    "ClassificationMetricsDataLoader",
+     "DatasetDatasetSplitsDataLoader",
+     "DatasetExampleRevisionsDataLoader",
+     "DatasetExampleSpansDataLoader",
+@@ -177,3 +182,6 @@ class CacheForDataLoaders:
+     token_cost: SpanCostSummaryCache = field(
+         default_factory=SpanCostSummaryCache,
+     )
++    classification_metrics: ClassificationMetricsCache = field(
++        default_factory=ClassificationMetricsCache,
++    )
+diff --git a/src/phoenix/server/api/dataloaders/classification_metrics.py b/src/phoenix/server/api/dataloaders/classification_metrics.py
+new file mode 100644
+index 000000000..da45c2484
+--- /dev/null
++++ b/src/phoenix/server/api/dataloaders/classification_metrics.py
+@@ -0,0 +1,407 @@
++import json
++import traceback
++from ast import literal_eval
++from collections import defaultdict
++from datetime import datetime
++from typing import Any, Dict, Literal, Optional, cast
++
++import pandas as pd
++from cachetools import LFUCache, TTLCache
++from sklearn.metrics import classification_report
++from sklearn.preprocessing import MultiLabelBinarizer
++from sqlalchemy import select
++from strawberry.dataloader import AbstractCache, DataLoader
++from typing_extensions import TypeAlias
++
++from phoenix.db import models
++from phoenix.server.api.dataloaders.cache import TwoTierCache
++from phoenix.server.api.input_types.TimeRange import TimeRange
++from phoenix.server.types import DbSessionFactory
++from phoenix.trace.dsl import SpanFilter
++
++MetricType: TypeAlias = Literal["precision", "recall", "f1", "support", "report"]
++ProjectRowId: TypeAlias = int
++TimeInterval: TypeAlias = tuple[Optional[datetime], Optional[datetime]]
++FilterCondition: TypeAlias = Optional[str]
++MetricValue: TypeAlias = float
++
++Segment: TypeAlias = tuple[TimeInterval, FilterCondition]
++Param: TypeAlias = tuple[ProjectRowId, MetricType]
++
++Key: TypeAlias = tuple[
++    ProjectRowId, Optional[TimeRange], FilterCondition, MetricType, Optional[int]
++]
++Result: TypeAlias = Optional[Any]
++ResultPosition: TypeAlias = int
++DEFAULT_VALUE: Result = None
++
++
++def _cache_key_fn(key: Key) -> tuple[Segment, Param]:
++    # Ignorar o experiment_id por enquanto e manter compatibilidade
++    if len(key) == 5:
++        project_id, time_range, filter_condition, metric_type, _ = key
++    else:
++        project_id, time_range, filter_condition, metric_type = key
++
++    interval = (
++        (time_range.start, time_range.end)
++        if isinstance(time_range, TimeRange)
++        else (None, None)
++    )
++    return (interval, filter_condition), (project_id, metric_type)
++
++
++_Section: TypeAlias = ProjectRowId
++_SubKey: TypeAlias = tuple[TimeInterval, FilterCondition, MetricType]
++
++
++class ClassificationMetricsCache(
++    TwoTierCache[Key, Result, _Section, _SubKey],
++):
++    def __init__(self) -> None:
++        super().__init__(
++            # TTL=3600 (1-hour) cache
++            main_cache=TTLCache(maxsize=64, ttl=3600),
++            sub_cache_factory=lambda: LFUCache(maxsize=2 * 2 * 4),
++        )
++
++    def _cache_key(self, key: Key) -> tuple[_Section, _SubKey]:
++        (interval, filter_condition), (project_rowid, metric_type) = _cache_key_fn(key)
++        return project_rowid, (interval, filter_condition, metric_type)
++
++
++class ClassificationMetricsDataLoader(DataLoader[Key, Result]):
++    def __init__(
++        self,
++        db: DbSessionFactory,
++        cache_map: Optional[AbstractCache[Key, Result]] = None,
++    ) -> None:
++        super().__init__(
++            load_fn=self._load_fn,
++            cache_key_fn=_cache_key_fn,
++            cache_map=cache_map,
++        )
++        self._db = db
++
++    async def _load_fn(self, keys: list[Key]) -> list[Result]:
++        results: list[Any] = [DEFAULT_VALUE] * len(keys)
++        arguments: defaultdict[
++            Segment,
++            defaultdict[Param, list[ResultPosition]],
++        ] = defaultdict(lambda: defaultdict(list))
++
++        for position, key in enumerate(keys):
++            experiment_id = None
++            if len(key) == 5:
++                project_id, time_range, filter_condition, metric_type, experiment_id = (
++                    key
++                )
++            else:
++                project_id, time_range, filter_condition, metric_type = key
++
++            segment = (
++                (
++                    (time_range.start, time_range.end)
++                    if isinstance(time_range, TimeRange)
++                    else (None, None)
++                ),
++                filter_condition,
++            )
++            param = (project_id, cast(MetricType, metric_type), experiment_id)
++            arguments[segment][param].append(position)
++
++        # Cache for calculated metrics to avoid recalculation
++        metrics_cache: Dict[tuple, Optional[Dict[str, Any]]] = {}
++
++        async with self._db() as session:
++            for segment, params in arguments.items():
++                # Group by (project_id, experiment_id) to calculate once per experiment
++                by_entity: Dict[tuple, list[tuple[MetricType, list[int]]]] = defaultdict(list)
++                for (
++                    project_id,
++                    metric_type,
++                    experiment_id,
++                ), positions in params.items():
++                    entity_key = (project_id, experiment_id)
++                    by_entity[entity_key].append((metric_type, positions))
++
++                for (project_id, experiment_id), metric_requests in by_entity.items():
++                    # Create cache key for this entity
++                    cache_key = (segment, project_id, experiment_id)
++
++                    # Check if already calculated
++                    if cache_key in metrics_cache:
++                        metrics = metrics_cache[cache_key]
++                    else:
++                        # Calculate all metrics once
++                        if experiment_id is not None:
++                            metrics = await self._calculate_experiment_metrics(
++                                session, experiment_id, segment
++                            )
++                        else:
++                            metrics = await self._calculate_classification_metrics(
++                                session, project_id, segment
++                            )
++                        metrics_cache[cache_key] = metrics
++
++                    # Distribute results to all positions
++                    for metric_type, positions in metric_requests:
++                        if metric_type == "report":
++                            for position in positions:
++                                results[position] = metrics if metrics else None
++                        elif metrics:
++                            for position in positions:
++                                results[position] = metrics.get(metric_type)
++
++        return results
++
++    async def _calculate_classification_metrics(
++        self, session: Any, project_id: int, segment: Segment
++    ) -> Optional[Dict[str, Any]]:
++        """Calculate precision, recall, and F1 score for project executions."""
++        try:
++            # Get the data required for metric calculation
++            (start_time, end_time), filter_condition = segment
++
++            project_query = select(models.Project.name).where(
++                models.Project.id == project_id
++            )
++            project_name = await session.scalar(project_query)
++
++            if not project_name:
++                return None
++
++            stmt = (
++                select(
++                    models.DatasetExampleRevision.dataset_version_id,
++                    models.ExperimentRun.dataset_example_id,
++                    models.DatasetExampleRevision.output["GROUND_TRUTH"].label(
++                        "reference"
++                    ),
++                    models.ExperimentRun.output["task_output"].label("output"),
++                )
++                .select_from(models.ExperimentRun)
++                .join(
++                    models.DatasetExampleRevision,
++                    models.ExperimentRun.dataset_example_id
++                    == models.DatasetExampleRevision.dataset_example_id,
++                    isouter=True,
++                )
++                .join(
++                    models.Experiment,
++                    models.ExperimentRun.experiment_id == models.Experiment.id,
++                )
++                .where(models.Experiment.project_name == project_name)
++            )
++
++            if start_time:
++                stmt = stmt.where(start_time <= models.ExperimentRun.start_time)
++            if end_time:
++                stmt = stmt.where(models.ExperimentRun.start_time < end_time)
++            if filter_condition:
++                sf = SpanFilter(filter_condition)
++                stmt = sf(stmt)
++
++            results = []
++            data = await session.stream(stmt)
++
++            async for dataset_version_id, dataset_example_id, reference, output in data:
++                if reference is not None and output is not None:
++                    results.append(
++                        {
++                            "dataset_version_id": dataset_version_id,
++                            "dataset_example_id": dataset_example_id,
++                            "reference": reference,
++                            "output": output,
++                        }
++                    )
++
++            if not results:
++                return None
++
++            # Convert to DataFrame to match original code format
++            df = pd.DataFrame(results)
++
++            # Process the data following the original code approach
++            return self._compute_metrics_with_sklearn(df)
++
++        except:
++            # Log the exception for debugging
++            print(f"Error calculating classification metrics: {traceback.format_exc()}")
++            return None
++
++    async def _calculate_experiment_metrics(
++        self, session: Any, experiment_id: int, segment: Segment
++    ) -> Optional[Dict[str, Any]]:
++        """Calculate classification metrics for a specific experiment."""
++        try:
++            # Obter os dados necessários para o cálculo da métrica
++            (start_time, end_time), filter_condition = segment
++
++            stmt = (
++                select(
++                    models.DatasetExampleRevision.dataset_version_id,
++                    models.ExperimentRun.dataset_example_id,
++                    models.DatasetExampleRevision.output["GROUND_TRUTH"].label(
++                        "reference"
++                    ),
++                    models.ExperimentRun.output["task_output"].label("output"),
++                )
++                .select_from(models.ExperimentRun)
++                .join(
++                    models.DatasetExampleRevision,
++                    models.ExperimentRun.dataset_example_id
++                    == models.DatasetExampleRevision.dataset_example_id,
++                    isouter=True,
++                )
++                .where(models.ExperimentRun.experiment_id == experiment_id)
++            )
++
++            if start_time:
++                stmt = stmt.where(start_time <= models.ExperimentRun.start_time)
++            if end_time:
++                stmt = stmt.where(models.ExperimentRun.start_time < end_time)
++            if filter_condition:
++                sf = SpanFilter(filter_condition)
++                stmt = sf(stmt)
++
++            results = []
++            data = await session.stream(stmt)
++
++            async for dataset_version_id, dataset_example_id, reference, output in data:
++                if reference is not None and output is not None:
++                    results.append(
++                        {
++                            "dataset_version_id": dataset_version_id,
++                            "dataset_example_id": dataset_example_id,
++                            "reference": reference,
++                            "output": output,
++                        }
++                    )
++
++            if not results:
++                return None
++
++            # Converter para DataFrame
++            df = pd.DataFrame(results)
++
++            # Processar os dados seguindo a abordagem original
++            return self._compute_metrics_with_sklearn(df)
++
++        except Exception as e:
++            print(f"Error calculating experiment metrics: {traceback.format_exc()}")
++            return None
++
++    def _compute_metrics_with_sklearn(self, data: pd.DataFrame) -> Dict[str, Any]:
++        """Compute metrics using sklearn, following the original code approach.
++
++        Returns a dictionary with both weighted avg metrics (for backward compatibility)
++        and the full per-class classification report.
++        """
++        try:
++            # Process reference data using literal_eval as in original code
++            data["reference"] = data.reference.apply(
++                lambda item: (literal_eval(item) if isinstance(item, str) else item)
++            )
++
++            data["output"] = data.output.apply(
++                lambda item: (
++                    item["sindrome"]
++                    if "sindrome" in item
++                    else (
++                        json.loads(item["messages"][0]["content"])["sindrome"]
++                        if "messages" in item
++                        else []
++                    )
++                )
++            )
++
++            # Define classes exactly as in original code
++            classes = [
++                "Síndrome Febril Respiratória (SFR)",
++                "Síndrome Febril (SF)",
++                "Síndrome Diarreica (SD)",
++                "Síndrome Febril Exantemática (SFE)",
++                "Síndrome Neurológica (SN)",
++                "Síndrome Febril Icterohemorrágica (SFIH)",
++                "Outros",
++            ]
++
++            # Use MultiLabelBinarizer from sklearn
++            mlb = MultiLabelBinarizer(classes=classes)
++            y_true = data.reference.to_list()
++            y_pred = data.output.to_list()
++
++            y_true = mlb.fit_transform(y_true)
++            y_pred = mlb.transform(y_pred)
++
++            # Generate the classification report using sklearn with output_dict=True
++            cr = classification_report(
++                y_true,
++                y_pred,
++                target_names=mlb.classes_,
++                zero_division=0,
++                output_dict=True,
++            )
++
++            # Build the full report with both weighted avg and per-class metrics
++            result = {
++                # Keep weighted avg metrics at root level for backward compatibility
++                "precision": 0.0,
++                "recall": 0.0,
++                "f1": 0.0,
++                "support": 0.0,
++                # Add full report structure
++                "weighted_avg": {},
++                "per_class": {},
++            }
++
++            # Extract weighted avg metrics
++            if "weighted avg" in cr:
++                metrics = cr["weighted avg"]
++                weighted = {
++                    "precision": float(metrics["precision"]),
++                    "recall": float(metrics["recall"]),
++                    "f1": float(metrics["f1-score"]),
++                    "support": float(metrics["support"]),
++                }
++                # Root level for backward compatibility
++                result.update(weighted)
++                # Also in weighted_avg key
++                result["weighted_avg"] = weighted
++
++            # Extract per-class metrics
++            # Skip aggregate metrics (accuracy, macro avg, weighted avg, samples avg)
++            skip_keys = {
++                "accuracy",
++                "macro avg",
++                "weighted avg",
++                "samples avg",
++                "micro avg",
++            }
++            for class_name, metrics in cr.items():
++                if class_name not in skip_keys and isinstance(metrics, dict):
++                    result["per_class"][class_name] = {
++                        "precision": float(metrics["precision"]),
++                        "recall": float(metrics["recall"]),
++                        "f1": float(metrics["f1-score"]),
++                        "support": int(metrics["support"]),
++                    }
++
++            return result
++
++        except:
++            print(f"Error in sklearn metrics computation: {traceback.format_exc()}")
++            return {
++                "precision": 0.0,
++                "recall": 0.0,
++                "f1": 0.0,
++                "support": 0.0,
++                "weighted_avg": {
++                    "precision": 0.0,
++                    "recall": 0.0,
++                    "f1": 0.0,
++                    "support": 0.0,
++                },
++                "per_class": {},
++            }
+diff --git a/src/phoenix/server/api/types/ClassificationMetrics.py b/src/phoenix/server/api/types/ClassificationMetrics.py
+new file mode 100644
+index 000000000..b794100fc
+--- /dev/null
++++ b/src/phoenix/server/api/types/ClassificationMetrics.py
+@@ -0,0 +1,143 @@
++"""
++GraphQL types for classification metrics and reports.
++
++These types represent the structure of classification metrics including
++per-class precision, recall, F1-score, and support, as well as aggregated
++weighted averages.
++"""
++
++from typing import Optional
++
++import strawberry
++
++
++@strawberry.type
++class ClassMetrics:
++    """
++    Metrics for a single class or aggregate (like weighted average).
++    
++    Represents precision, recall, F1-score, and support count.
++    """
++    
++    precision: float = strawberry.field(
++        description="Precision score (0.0 to 1.0)"
++    )
++    recall: float = strawberry.field(
++        description="Recall score (0.0 to 1.0)"
++    )
++    f1: float = strawberry.field(
++        description="F1-score (harmonic mean of precision and recall)"
++    )
++    support: int = strawberry.field(
++        description="Number of instances for this class"
++    )
++
++
++@strawberry.type
++class PerClassMetrics:
++    """
++    Metrics for a specific class in the classification report.
++    
++    Combines the class name with its associated metrics.
++    """
++    
++    class_name: str = strawberry.field(
++        description="Name of the class (e.g., 'Síndrome Febril (SF)')"
++    )
++    metrics: ClassMetrics = strawberry.field(
++        description="Precision, recall, F1, and support for this class"
++    )
++
++
++@strawberry.type
++class ClassificationReport:
++    """
++    Complete classification report including weighted averages and per-class metrics.
++    
++    This report provides a comprehensive view of model performance across all classes,
++    including both aggregate metrics (weighted average) and detailed per-class breakdown.
++    """
++    
++    weighted_avg: ClassMetrics = strawberry.field(
++        description="Weighted average metrics across all classes"
++    )
++    per_class: list[PerClassMetrics] = strawberry.field(
++        description="Detailed metrics for each individual class"
++    )
++
++
++def build_classification_report(
++    metrics_data: dict,
++) -> Optional[ClassificationReport]:
++    """
++    Convert raw metrics data from DataLoader into GraphQL ClassificationReport type.
++    
++    Args:
++        metrics_data: Dictionary containing 'weighted_avg' and 'per_class' keys
++        
++    Returns:
++        ClassificationReport object or None if data is invalid
++        
++    Example:
++        >>> data = {
++        ...     "weighted_avg": {
++        ...         "precision": 0.82,
++        ...         "recall": 0.72,
++        ...         "f1": 0.74,
++        ...         "support": 585
++        ...     },
++        ...     "per_class": {
++        ...         "Class A": {
++        ...             "precision": 0.90,
++        ...             "recall": 0.85,
++        ...             "f1": 0.87,
++        ...             "support": 100
++        ...         }
++        ...     }
++        ... }
++        >>> report = build_classification_report(data)
++    """
++    if not metrics_data or not isinstance(metrics_data, dict):
++        return None
++    
++    # Extract weighted average
++    weighted_avg_data = metrics_data.get("weighted_avg")
++    if not weighted_avg_data:
++        return None
++    
++    try:
++        weighted_avg = ClassMetrics(
++            precision=float(weighted_avg_data["precision"]),
++            recall=float(weighted_avg_data["recall"]),
++            f1=float(weighted_avg_data["f1"]),
++            support=int(weighted_avg_data["support"]),
++        )
++    except (KeyError, ValueError, TypeError):
++        return None
++    
++    # Extract per-class metrics
++    per_class_data = metrics_data.get("per_class", {})
++    per_class_metrics = []
++    
++    for class_name, class_metrics_data in per_class_data.items():
++        try:
++            class_metrics = ClassMetrics(
++                precision=float(class_metrics_data["precision"]),
++                recall=float(class_metrics_data["recall"]),
++                f1=float(class_metrics_data["f1"]),
++                support=int(class_metrics_data["support"]),
++            )
++            per_class_metrics.append(
++                PerClassMetrics(
++                    class_name=class_name,
++                    metrics=class_metrics,
++                )
++            )
++        except (KeyError, ValueError, TypeError):
++            # Skip invalid class metrics
++            continue
++    
++    return ClassificationReport(
++        weighted_avg=weighted_avg,
++        per_class=per_class_metrics,
++    )
+diff --git a/src/phoenix/server/api/types/Experiment.py b/src/phoenix/server/api/types/Experiment.py
+index a55fc8c02..23624754e 100644
+--- a/src/phoenix/server/api/types/Experiment.py
++++ b/src/phoenix/server/api/types/Experiment.py
+@@ -16,6 +16,10 @@ from phoenix.server.api.input_types.ExperimentRunSort import (
+     add_order_by_and_page_start_to_query,
+     get_experiment_run_cursor,
+ )
++from phoenix.server.api.types.ClassificationMetrics import (
++    ClassificationReport,
++    build_classification_report,
++)
+ from phoenix.server.api.types.CostBreakdown import CostBreakdown
+ from phoenix.server.api.types.DatasetSplit import DatasetSplit
+ from phoenix.server.api.types.DatasetVersion import DatasetVersion
+@@ -254,6 +258,73 @@ class Experiment(Node):
+         latency_ms = await info.context.data_loaders.average_experiment_run_latency.load(self.id)
+         return latency_ms
+ 
++    @strawberry.field
++    async def latency_ms_stdev(self, info: Info[Context, None]) -> Optional[float]:
++        """Get the standard deviation of run latency in milliseconds."""
++        experiment_id = self.id
++        async with info.context.db() as session:
++            result = await session.scalar(
++                select(
++                    func.stddev(
++                        func.extract("EPOCH", models.ExperimentRun.end_time)
++                        - func.extract("EPOCH", models.ExperimentRun.start_time)
++                    )
++                    * 1000
++                ).where(models.ExperimentRun.experiment_id == experiment_id)
++            )
++        return result
++
++    @strawberry.field
++    async def classification_metric(
++        self,
++        info: Info[Context, None],
++        metric: str,
++    ) -> Optional[float]:
++        """Get classification metrics (precision, recall, f1, support) for experiment."""
++        metric_str = metric.lower() if hasattr(metric, 'lower') else str(metric).lower()
++        project_id = None
++        if self.db_record:
++            project_name = self.db_record.project_name
++        else:
++            project_name = await info.context.data_loaders.experiment_fields.load(
++                (self.id, models.Experiment.project_name),
++            )
++        if project_name:
++            project = await info.context.data_loaders.project_by_name.load(project_name)
++            if project:
++                project_id = project.id
++        if project_id is None:
++            return None
++        return await info.context.data_loaders.classification_metrics.load(
++            (project_id, None, None, metric_str)
++        )
++
++    @strawberry.field
++    async def classification_report(
++        self,
++        info: Info[Context, None],
++    ) -> Optional[ClassificationReport]:
++        """Get full classification report with per-class metrics for experiment."""
++        project_id = None
++        if self.db_record:
++            project_name = self.db_record.project_name
++        else:
++            project_name = await info.context.data_loaders.experiment_fields.load(
++                (self.id, models.Experiment.project_name),
++            )
++        if project_name:
++            project = await info.context.data_loaders.project_by_name.load(project_name)
++            if project:
++                project_id = project.id
++        if project_id is None:
++            return None
++        metrics_data = await info.context.data_loaders.classification_metrics.load(
++            (project_id, None, None, "report", self.id)
++        )
++        if not metrics_data:
++            return None
++        return build_classification_report(metrics_data)
++
+     @strawberry.field
+     async def project(
+         self, info: Info[Context, None]
+diff --git a/src/phoenix/server/app.py b/src/phoenix/server/app.py
+index 1b90e2145..da5e319cb 100644
+--- a/src/phoenix/server/app.py
++++ b/src/phoenix/server/app.py
+@@ -88,6 +88,7 @@ from phoenix.server.api.dataloaders import (
+     AverageExperimentRepeatedRunGroupLatencyDataLoader,
+     AverageExperimentRunLatencyDataLoader,
+     CacheForDataLoaders,
++    ClassificationMetricsDataLoader,
+     DatasetDatasetSplitsDataLoader,
+     DatasetExampleRevisionsDataLoader,
+     DatasetExamplesAndVersionsByExperimentRunDataLoader,
+@@ -873,6 +874,14 @@ def create_graphql_router(
+                 user_api_key_fields=TableFieldsDataLoader(db, models.ApiKey),
+                 user_fields=TableFieldsDataLoader(db, models.User),
+                 user_roles=UserRolesDataLoader(db),
++                classification_metrics=ClassificationMetricsDataLoader(
++                    db,
++                    cache_map=(
++                        cache_for_dataloaders.classification_metrics
++                        if cache_for_dataloaders
++                        else None
++                    ),
++                ),
+             ),
+             cache_for_dataloaders=cache_for_dataloaders,
+             read_only=read_only,
